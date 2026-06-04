@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meeting Recorder</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f7; color: #1d1d1f; }
+  .container { display: grid; grid-template-columns: 280px 1fr; height: 100vh; }
+  aside { background: #fff; border-right: 1px solid #e5e5e5; padding: 20px; overflow-y: auto; }
+  aside h2 { font-size: 12px; text-transform: uppercase; color: #6e6e73; margin-bottom: 12px; letter-spacing: .5px; }
+  .meeting-item { padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; }
+  .meeting-item:hover { background: #f0f0f0; }
+  .meeting-item.active { background: #e8f0fe; }
+  .meeting-title { font-weight: 500; font-size: 14px; }
+  .meeting-date { font-size: 11px; color: #6e6e73; margin-top: 2px; }
+  main { padding: 40px; overflow-y: auto; }
+  .record-section { background: #fff; border-radius: 16px; padding: 32px; text-align: center; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .record-btn { width: 80px; height: 80px; border-radius: 50%; border: none; background: #ff3b30; color: #fff; font-size: 28px; cursor: pointer; transition: transform .15s, background .15s; }
+  .record-btn:hover { transform: scale(1.05); }
+  .record-btn:disabled { background: #c7c7cc; cursor: not-allowed; transform: none; }
+  .record-btn.recording { background: #1d1d1f; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,.5); } 50% { box-shadow: 0 0 0 20px rgba(255,59,48,0); } }
+  .timer { font-size: 14px; color: #6e6e73; margin-top: 12px; font-variant-numeric: tabular-nums; }
+  .status { margin-top: 8px; font-size: 13px; color: #6e6e73; }
+  .results { background: #fff; border-radius: 16px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .results h1 { font-size: 22px; margin-bottom: 4px; }
+  .results .meta { font-size: 12px; color: #6e6e73; margin-bottom: 20px; }
+  .results h3 { font-size: 12px; text-transform: uppercase; color: #6e6e73; margin: 22px 0 8px; letter-spacing: .5px; }
+  .results p, .results li { line-height: 1.55; font-size: 14px; }
+  .results ul { padding-left: 20px; }
+  .results li { margin-bottom: 6px; }
+  .transcript { background: #f5f5f7; padding: 16px; border-radius: 10px; max-height: 240px; overflow-y: auto; font-size: 13px; line-height: 1.6; color: #424245; white-space: pre-wrap; }
+  .empty { color: #86868b; text-align: center; padding: 60px 20px; font-size: 14px; }
+  .delete-btn { float: right; background: none; border: 1px solid #e5e5e5; color: #6e6e73; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .delete-btn:hover { background: #ff3b30; color: #fff; border-color: #ff3b30; }
+</style>
+</head>
+<body>
+<div class="container">
+  <aside>
+    <h2>Past Meetings</h2>
+    <div id="meetings-list"></div>
+  </aside>
+  <main>
+    <div class="record-section">
+      <button id="record-btn" class="record-btn" title="Record">●</button>
+      <div class="timer" id="timer">00:00</div>
+      <div class="status" id="status">Click the button to start recording</div>
+    </div>
+    <div id="results-container">
+      <div class="empty">Record a meeting or select one from the sidebar.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+let mediaRecorder = null;
+let chunks = [];
+let startTime = 0;
+let timerInterval = null;
+let currentMeetingId = null;
+
+const recordBtn = document.getElementById('record-btn');
+const timerEl = document.getElementById('timer');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results-container');
+const meetingsList = document.getElementById('meetings-list');
+
+function fmtTime(s) {
+  const m = Math.floor(s / 60).toString().padStart(2, '0');
+  const sec = (s % 60).toString().padStart(2, '0');
+  return `${m}:${sec}`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    chunks = [];
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = onStop;
+    mediaRecorder.start();
+    startTime = Date.now();
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '■';
+    statusEl.textContent = 'Recording…';
+    timerInterval = setInterval(() => {
+      const s = Math.floor((Date.now() - startTime) / 1000);
+      timerEl.textContent = fmtTime(s);
+    }, 500);
+  } catch (e) {
+    statusEl.textContent = 'Microphone access denied: ' + e.message;
+  }
+}
+
+function stopRecording() {
+  mediaRecorder.stop();
+  mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  clearInterval(timerInterval);
+  recordBtn.classList.remove('recording');
+  recordBtn.textContent = '●';
+}
+
+async function onStop() {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  statusEl.textContent = 'Transcribing & summarizing… (this may take 30s–2 min)';
+  recordBtn.disabled = true;
+
+  const form = new FormData();
+  form.append('file', blob, 'recording.webm');
+
+  try {
+    const resp = await fetch('/api/process', { method: 'POST', body: form });
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(err);
+    }
+    const data = await resp.json();
+    statusEl.textContent = 'Done';
+    timerEl.textContent = '00:00';
+    await loadMeetings();
+    showMeeting(data.id);
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+  } finally {
+    recordBtn.disabled = false;
+  }
+}
+
+recordBtn.addEventListener('click', () => {
+  if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording();
+  else startRecording();
+});
+
+async function loadMeetings() {
+  const resp = await fetch('/api/meetings');
+  const list = await resp.json();
+  meetingsList.innerHTML = '';
+  if (list.length === 0) {
+    meetingsList.innerHTML = '<div style="font-size:13px;color:#86868b;">No meetings yet.</div>';
+    return;
+  }
+  for (const m of list) {
+    const div = document.createElement('div');
+    div.className = 'meeting-item' + (m.id === currentMeetingId ? ' active' : '');
+    const date = new Date(m.created_at + 'Z').toLocaleString();
+    div.innerHTML = `<div class="meeting-title">${escapeHtml(m.title || 'Untitled')}</div><div class="meeting-date">${date}</div>`;
+    div.onclick = () => showMeeting(m.id);
+    meetingsList.appendChild(div);
+  }
+}
+
+async function showMeeting(id) {
+  const resp = await fetch('/api/meetings/' + id);
+  if (!resp.ok) return;
+  const m = await resp.json();
+  currentMeetingId = id;
+  const s = m.summary || {};
+  const date = new Date(m.created_at + 'Z').toLocaleString();
+  resultsEl.innerHTML = `
+    <div class="results">
+      <button class="delete-btn" onclick="deleteMeeting('${id}')">Delete</button>
+      <h1>${escapeHtml(m.title || 'Untitled')}</h1>
+      <div class="meta">${date}</div>
+      <h3>Summary</h3>
+      <p>${escapeHtml(s.summary || '')}</p>
+      <h3>Key Points</h3>
+      <ul>${(s.key_points || []).map(p => `<li>${escapeHtml(p)}</li>`).join('') || '<li>(none)</li>'}</ul>
+      <h3>Action Items</h3>
+      <ul>${(s.action_items || []).map(p => `<li>${escapeHtml(p)}</li>`).join('') || '<li>(none)</li>'}</ul>
+      <h3>Full Transcript</h3>
+      <div class="transcript">${escapeHtml(m.transcript || '')}</div>
+    </div>
+  `;
+  loadMeetings();
+}
+
+async function deleteMeeting(id) {
+  if (!confirm('Delete this meeting?')) return;
+  await fetch('/api/meetings/' + id, { method: 'DELETE' });
+  currentMeetingId = null;
+  resultsEl.innerHTML = '<div class="empty">Record a meeting or select one from the sidebar.</div>';
+  loadMeetings();
+}
+
+loadMeetings();
+</script>
+</body>
+</html>

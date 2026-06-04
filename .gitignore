@@ -1,0 +1,16 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# App data (recordings, transcripts, db, logs)
+data/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
